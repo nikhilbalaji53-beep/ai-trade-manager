@@ -44,9 +44,12 @@ export function MarketDataConnectorModal({
   const [brokerConnected, setBrokerConnected] = useState(() => !!localStorage.getItem('tradepilot_broker_key'))
   const [brokerConnecting, setBrokerConnecting] = useState(false)
 
-  const API_BASE = typeof window !== 'undefined'
-    ? (window.location.hostname === 'localhost' ? 'http://localhost:8000' : `http://${window.location.hostname}:8000`)
-    : 'http://localhost:8000'
+  // API URL — resolved from Vite env vars at build time.
+  // Development:  .env.development  → http://127.0.0.1:8000 / wss://ai-trade-manager.onrender.com/api/ws
+  // Production:   .env.production   → https://ai-trade-manager.onrender.com / wss://...
+  // Fallback is the production URL so a misconfigured build never silently uses localhost.
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://ai-trade-manager.onrender.com'
+  const WS_URL   = import.meta.env.VITE_WS_URL      || 'wss://ai-trade-manager.onrender.com/api/ws'
 
   const showToast = (msg) => {
     setToast(msg)
@@ -427,7 +430,7 @@ export function MarketDataConnectorModal({
                   <tbody>
                     <tr>
                       <td><b>WebSocket Tick Stream</b></td>
-                      <td><code>ws://127.0.0.1:8000/api/ws</code></td>
+                      <td><code>{WS_URL}</code></td>
                       <td>FastAPI + asyncio broadcaster</td>
                       <td><span className="badge badge-green">Connected (1s)</span></td>
                       <td>&lt; 5ms</td>

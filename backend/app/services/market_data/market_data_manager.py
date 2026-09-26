@@ -258,6 +258,10 @@ class MarketDataManager:
         # Route US / International symbols to International provider
         elif (clean_sym in CORE_US_SYMBOLS or symbol.startswith("NASDAQ:") or symbol.startswith("NYSE:")) and self._international_provider:
             raw_quote = self._international_provider.get_quote(clean_sym)
+            if raw_quote:
+                raw_quote.setdefault("currency_symbol", "$")
+                raw_quote.setdefault("currency", "USD")
+                raw_quote.setdefault("country", "United States")
         # Route BSE-specific symbols to BSE provider
         elif clean_sym in ["SENSEX", "BSESENSEX"] and self._bse_provider:
             raw_quote = self._bse_provider.get_quote(clean_sym)

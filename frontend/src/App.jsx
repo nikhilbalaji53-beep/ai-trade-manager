@@ -70,14 +70,15 @@ import { CryptoDesk } from './CryptoDesk'
 import { MarketDataConnectorModal } from './MarketDataConnectorModal'
 
 // --- Base API and WebSocket configuration ---
-
-const API_BASE = typeof window !== 'undefined'
-  ? (window.location.hostname === 'localhost' ? 'http://localhost:8000' : `http://${window.location.hostname}:8000`)
-  : 'http://localhost:8000'
-
-const WS_BASE = typeof window !== 'undefined'
-  ? (window.location.hostname === 'localhost' ? 'ws://localhost:8000' : `ws://${window.location.hostname}:8000`)
-  : 'ws://localhost:8000'
+// Development:  .env.development  → VITE_API_BASE_URL=http://127.0.0.1:8000
+//                                  → VITE_WS_URL=wss://ai-trade-manager.onrender.com/api/ws
+// Production:   .env.production   → VITE_API_BASE_URL=https://ai-trade-manager.onrender.com
+//                                  → VITE_WS_URL=wss://ai-trade-manager.onrender.com/api/ws
+// Override on Render → Static Site → Environment Variables before each build.
+// Fallback is the production URL — never localhost — so a misconfigured build
+// still reaches the correct backend instead of silently failing.
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://ai-trade-manager.onrender.com'
+const WS_URL   = import.meta.env.VITE_WS_URL      || 'wss://ai-trade-manager.onrender.com/api/ws'
 
 // --- Utility Currency Formatters for INR (₹) ---
 const money = (val) => {
@@ -307,15 +308,22 @@ function DataFreshnessBadge({ timestamp, status, isLive }) {
   return <span className="badge badge-green" style={{ fontSize: 9.5 }}>● LIVE ({ageText})</span>
 }
 
-// --- Development Market Feed Debug HUD Panel ---
-function MarketFeedDebugPanel({ wsConnected, provider, subscriptionsCount, lastTickTime, ticksPerSec, latencyMs, staleCount }) {
+// --- Market Feed Debug HUD Panel ---
+function MarketFeedDebugPanel({ wsStatus, provider, subscriptionsCount, lastTickTime, ticksPerSec, latencyMs, staleCount }) {
   const [minimized, setMinimized] = useState(false)
+
+  // Derive colour and label from the 3-state wsStatus
+  const isConnected    = wsStatus === 'CONNECTED'
+  const isConnecting   = wsStatus === 'CONNECTING'
+  const dotColor       = isConnected ? '#10b981' : isConnecting ? '#38bdf8' : '#ef4444'
+  const statusLabel    = isConnected ? '● CONNECTED' : isConnecting ? '● CONNECTING…' : '⚠ DISCONNECTED'
+  const statusColor    = isConnected ? '#10b981' : isConnecting ? '#38bdf8' : '#ef4444'
 
   return (
     <div className="market-debug-panel">
       <div className="market-debug-header" onClick={() => setMinimized(prev => !prev)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="live-tick-pulse" style={{ background: wsConnected ? '#10b981' : '#ef4444' }} />
+          <span className="live-tick-pulse" style={{ background: dotColor }} />
           <span style={{ fontSize: 11.5, fontWeight: 800, color: '#38bdf8' }}>
             MARKET FEED DEBUG HUD
           </span>
@@ -331,8 +339,8 @@ function MarketFeedDebugPanel({ wsConnected, provider, subscriptionsCount, lastT
         <div className="market-debug-body">
           <div className="market-debug-row">
             <span style={{ color: 'var(--text-dim)' }}>Connection:</span>
-            <span style={{ fontWeight: 700, color: wsConnected ? '#10b981' : '#ef4444' }}>
-              {wsConnected ? '● CONNECTED' : '⚠ DISCONNECTED'}
+            <span style={{ fontWeight: 700, color: statusColor }}>
+              {statusLabel}
             </span>
           </div>
           <div className="market-debug-row">
@@ -361,7 +369,7 @@ function MarketFeedDebugPanel({ wsConnected, provider, subscriptionsCount, lastT
           </div>
           <div className="market-debug-row">
             <span style={{ color: 'var(--text-dim)' }}>WebSocket Channel:</span>
-            <span style={{ color: '#38bdf8' }}>ws://127.0.0.1:8000/api/ws</span>
+            <span style={{ color: '#38bdf8', wordBreak: 'break-all' }}>{WS_URL}</span>
           </div>
         </div>
       )}
@@ -1461,6 +1469,8 @@ export default function App() {
   const [signals, setSignals] = useState([])
   const [alertFilter, setAlertFilter] = useState('ALL')
   const [liveConnected, setLiveConnected] = useState(false)
+  // wsStatus: 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED'
+  const [wsStatus, setWsStatus] = useState('DISCONNECTED')
   const [lastTickTime, setLastTickTime] = useState(null)
   const [liveTickCount, setLiveTickCount] = useState(0)
   const [toastMessage, setToastMessage] = useState('')
@@ -1632,16 +1642,18 @@ export default function App() {
 
     let ws = null
     let reconnectTimer = null
-    let reconnectDelay = 1000       // Start at 1s, backs off to max 10s
+    let reconnectDelay = 1000       // Start at 1s, backs off to max 30s
+    let firstTickReceived = false
 
     // ── Primary data channel: WebSocket (1-second ticks from backend) ──
     const connectWs = () => {
+      setWsStatus('CONNECTING')
+      firstTickReceived = false
       try {
-        ws = new WebSocket(`${WS_BASE}/api/ws`)
+        ws = new WebSocket(WS_URL)
 
         ws.onopen = () => {
-          setLiveConnected(true)
-          reconnectDelay = 1000     // Reset backoff on success
+          reconnectDelay = 1000     // Reset backoff on successful open
           try {
             ws.send(JSON.stringify({
               action: 'subscribe',
@@ -1749,6 +1761,13 @@ export default function App() {
               })
             }
 
+            // ── Mark CONNECTED on first valid tick ──
+            if (!firstTickReceived && (msg.type === 'TICK_UPDATE' || (msg.quotes && Array.isArray(msg.quotes) && msg.quotes.length > 0))) {
+              firstTickReceived = true
+              setWsStatus('CONNECTED')
+              setLiveConnected(true)
+            }
+
             if (msg.type !== 'TICK_UPDATE') return
 
             // ── 1-Second Live Heartbeat Telemetry ──
@@ -1811,14 +1830,17 @@ export default function App() {
 
         ws.onclose = () => {
           setLiveConnected(false)
-          reconnectDelay = Math.min(reconnectDelay * 1.5, 10000)
+          setWsStatus('DISCONNECTED')
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 30000)  // cap at 30s for production
           reconnectTimer = setTimeout(connectWs, reconnectDelay)
         }
 
         ws.onerror = () => {
-          // onclose will fire after onerror, don't double-reconnect
+          // onclose fires after onerror — reconnect is handled there
+          setWsStatus('DISCONNECTED')
         }
       } catch {
+        setWsStatus('DISCONNECTED')
         reconnectTimer = setTimeout(connectWs, reconnectDelay)
       }
     }
@@ -3807,7 +3829,7 @@ export default function App() {
 
       {/* Real-Time Market Feed Debug HUD Panel */}
       <MarketFeedDebugPanel
-        wsConnected={liveConnected}
+        wsStatus={wsStatus}
         provider={feedHealth?.provider_name || 'NSE_YFINANCE'}
         subscriptionsCount={quotes.length || 76}
         lastTickTime={lastTickTime}

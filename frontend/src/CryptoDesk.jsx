@@ -21,10 +21,11 @@ import {
   Sparkles,
 } from 'lucide-react'
 
-// Base API URL resolver
-const API_BASE = typeof window !== 'undefined'
-  ? (window.location.hostname === 'localhost' ? 'http://localhost:8000' : `http://${window.location.hostname}:8000`)
-  : 'http://localhost:8000'
+// Base API URL — resolved from Vite env vars at build time.
+// Development (.env.development): http://127.0.0.1:8000
+// Production  (.env.production):  https://ai-trade-manager.onrender.com
+// Fallback is the production URL so a misconfigured build never silently uses localhost.
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://ai-trade-manager.onrender.com'
 
 const moneyINR = (val) => {
   if (val === null || val === undefined || isNaN(val)) return '—'

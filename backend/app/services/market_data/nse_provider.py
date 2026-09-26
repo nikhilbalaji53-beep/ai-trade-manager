@@ -18,6 +18,7 @@ IMPORTANT:
   - The last-known CACHE may be returned with data_status="STALE".
 """
 import os
+import math
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -125,6 +126,30 @@ EXCHANGE_TICKER_MAP: Dict[str, str] = {
 # NIFTY BANK fallback ticker list — tried in order when primary fails
 NIFTYBANK_FALLBACK_TICKERS = ["^NSEBANK", "NIFTYBEES.NS", "BANKBEES.NS"]
 
+# Fallback ticker mappings when primary symbol/ticker fails or has alternate listings
+FALLBACK_TICKER_MAP: Dict[str, List[str]] = {
+    # NSE Indices
+    "NIFTY BANK":     NIFTYBANK_FALLBACK_TICKERS,
+    "NIFTYBANK":      NIFTYBANK_FALLBACK_TICKERS,
+    "NIFTY 50":       ["^NSEI", "NIFTYBEES.NS"],
+    "NIFTY50":        ["^NSEI", "NIFTYBEES.NS"],
+    "SENSEX":         ["^BSESN"],
+    "BSESENSEX":      ["^BSESN"],
+    # Commodities & Precious Metals
+    "GOLD":           ["GOLDBEES.NS", "GOLDSHARE.NS", "GC=F"],
+    "GOLDBEES":       ["GOLDBEES.NS", "GOLDSHARE.NS"],
+    "SILVER":         ["SILVERBEES.NS", "SILVER.NS", "SI=F"],
+    "SILVERBEES":     ["SILVERBEES.NS", "SILVER.NS"],
+    # Equities with corporate action or alternative ticker symbols
+    "TATAMOTORS":     ["TMPV.NS", "TATAMOTORS.NS"],
+    "TMPV":           ["TMPV.NS", "TATAMOTORS.NS"],
+    "TMCV":           ["TMCV.NS", "TATAMOTORS.NS"],
+    "BAJAJAUTO":      ["BAJAJ-AUTO.NS", "BAJAJAUTO.NS"],
+    "BAJAJ-AUTO":     ["BAJAJ-AUTO.NS", "BAJAJAUTO.NS"],
+    "MM":             ["M&M.NS", "MM.NS"],
+    "M&M":            ["M&M.NS", "MM.NS"],
+}
+
 # Commodity futures that are USD-denominated (need INR conversion)
 USD_COMMODITY_TICKERS = {"GC=F", "SI=F"}
 
@@ -137,8 +162,12 @@ def _resolve_yf_ticker(symbol: str) -> str:
     Resolve a TradePilot symbol to its Yahoo Finance ticker.
     Falls back to SYMBOL.NS for unknown NSE equities.
     """
-    clean = symbol.upper().replace(".NS", "").replace(".BO", "")
-    return EXCHANGE_TICKER_MAP.get(clean, f"{clean}.NS")
+    clean = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    if clean in EXCHANGE_TICKER_MAP:
+        return EXCHANGE_TICKER_MAP[clean]
+    if clean.startswith("^") or "=" in clean or clean.endswith(".NS") or clean.endswith(".BO"):
+        return clean
+    return f"{clean}.NS"
 
 
 def _get_market_status() -> str:
@@ -688,19 +717,34 @@ class NSEMarketDataProvider(MarketDataProvider):
 
         bars = []
         for ts, row in df.iterrows():
-            dt = ts.to_pydatetime()
-            vol = row.get("Volume", 0)
-            vol_int = int(vol) if (vol is not None and vol == vol) else 0
-            bars.append({
-                "timestamp": dt.isoformat(),
-                "time":      int(dt.timestamp()),
-                "open":      round(float(row["Open"]),   2),
-                "high":      round(float(row["High"]),   2),
-                "low":       round(float(row["Low"]),    2),
-                "close":     round(float(row["Close"]),  2),
-                "volume":    vol_int,
-                "data_source": "NSE_YFINANCE",
-            })
+            try:
+                dt = ts.to_pydatetime()
+                c = float(row["Close"])
+                if math.isnan(c) or math.isinf(c) or c <= 0:
+                    continue
+                o = float(row.get("Open", c))
+                h = float(row.get("High", c))
+                l = float(row.get("Low", c))
+                if math.isnan(o) or math.isinf(o) or o <= 0:
+                    o = c
+                if math.isnan(h) or math.isinf(h) or h <= 0:
+                    h = max(o, c)
+                if math.isnan(l) or math.isinf(l) or l <= 0:
+                    l = min(o, c)
+                vol = row.get("Volume", 0)
+                vol_int = int(vol) if (vol is not None and not (isinstance(vol, float) and math.isnan(vol))) else 0
+                bars.append({
+                    "timestamp": dt.isoformat(),
+                    "time":      int(dt.timestamp()),
+                    "open":      round(o, 2),
+                    "high":      round(h, 2),
+                    "low":       round(l, 2),
+                    "close":     round(c, 2),
+                    "volume":    vol_int,
+                    "data_source": "NSE_YFINANCE",
+                })
+            except Exception:
+                continue
 
         if timeframe in ("6mo", "6M", "past_6mo"):
             return bars[-max(count, 130):]

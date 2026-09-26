@@ -82,7 +82,13 @@ has_wildcard = "*" in allowed_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins if allowed_origins else ["*"],
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?" if not has_wildcard else None,
+    # Regex covers:
+    #   • localhost / 127.0.0.1 on any port  (development)
+    #   • any *.onrender.com subdomain       (production — frontend & backend on Render)
+    allow_origin_regex=(
+        r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
+        r"|https://[a-zA-Z0-9\-]+\.onrender\.com"
+    ) if not has_wildcard else None,
     allow_credentials=not has_wildcard,  # Browser CORS spec mandates credentials=False when origins='*'
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["*"],

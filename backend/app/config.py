@@ -5,16 +5,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "TradePilot — AI-Powered Real-Time NSE/BSE Trading System"
     api_prefix: str = "/api"
+    # CORS allowed origins: comma-separated list.
+    # Override via CORS_ORIGINS env var on Render (Web Service → Environment).
+    # Include both the backend Render URL and your deployed frontend URL here.
     cors_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173,"
         "http://localhost:4173,http://127.0.0.1:4173,"
         "http://localhost:3000,http://127.0.0.1:3000,"
-        "http://localhost:8000,http://127.0.0.1:8000"
+        "http://localhost:8000,http://127.0.0.1:8000,"
+        # Production Render origins — covers backend + any frontend on onrender.com
+        # Override via CORS_ORIGINS env var on Render before deploying.
+        "https://ai-trade-manager.onrender.com"
     )
     starting_capital: float = 500_000.0
     environment: str = "production"
     debug: bool = False
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"  # Must be 0.0.0.0 on Render (not 127.0.0.1)
     port: int = 8000
     workers: int = 2
     secret_key: str = "tradepilot-production-secret-key-change-in-env"
